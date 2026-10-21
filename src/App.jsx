@@ -76,7 +76,7 @@ Debes responder ÚNICAMENTE con un objeto JSON estricto sin ningún texto o form
   ]
 }`;
 
-      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${activeKey}`;
+      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${activeKey}`;
 
       const response = await fetch(apiUrl, {
         method: 'POST',
