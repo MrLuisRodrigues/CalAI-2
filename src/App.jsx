@@ -51,11 +51,10 @@ export default function App() {
       return;
     }
 
-    try {
-      const base64Data = base64Image.replace(/^data:image\/(png|jpeg|jpg|webp);base64,/, "");
+    const base64Data = base64Image.replace(/^data:image\/(png|jpeg|jpg|webp);base64,/, "");
 
-      const systemPrompt = `Eres un sistema avanzado de visión por computadora y nutrición. Analiza la imagen entregada e identifica los alimentos reales visibles.
-Si ves una mezcla de ingredientes (ejemplo: pasta, pollo, plátano maduro, tocineta, huevo), desglósalos de forma independiente. No asumas recetas comerciales genéricas como Avocado Toast.
+    const systemPrompt = `Eres un sistema avanzado de visión por computadora y nutrición. Analiza la imagen entregada e identifica los alimentos reales visibles.
+Si ves una mezcla de ingredientes (ejemplo: pasta, pollo, plátano maduro, tocineta, huevo), desglósalos de forma independiente. No asumas recetas comerciales genéricas.
 
 Debes responder ÚNICAMENTE con un objeto JSON estricto sin ningún texto o formato Markdown alrededor, siguiendo este esquema:
 {
@@ -75,50 +74,66 @@ Debes responder ÚNICAMENTE con un objeto JSON estricto sin ningún texto o form
   ]
 }`;
 
-      // Usando gemini-2.5-flash en la API v1beta
-      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${activeKey}`;
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [
-              { text: systemPrompt },
-              { inlineData: { mimeType: "image/jpeg", data: base64Data } }
-            ]
-          }],
-          generationConfig: {
-            responseMimeType: "application/json"
-          }
-        })
-      });
+    // Lista de modelos a intentar en orden en caso de alta demanda
+    const modelsToTry = ['gemini-3.8-flash', 'gemini-1.5-flash', 'gemini-2.0-flash'];
+    let lastError = null;
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error?.message || 'Error en la respuesta de Gemini');
+    for (const modelName of modelsToTry) {
+      try {
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${activeKey}`;
+
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                { text: systemPrompt },
+                { inlineData: { mimeType: "image/jpeg", data: base64Data } }
+              ]
+            }],
+            generationConfig: {
+              responseMimeType: "application/json"
+            }
+          })
+        });
+
+        if (response.status === 429 || response.status === 539) {
+          // Si el modelo está saturado, intentamos con el siguiente de la lista
+          console.warn(`Modelo ${modelName} saturado, intentando modelo de respaldo...`);
+          continue;
+        }
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error?.message || 'Error en la respuesta de Gemini');
+        }
+
+        const data = await response.json();
+        const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+        if (!rawText) throw new Error('La IA no devolvió ningún resultado.');
+
+        const parsed = JSON.parse(rawText);
+
+        setCurrentMeal({
+          id: 'meal-' + Date.now(),
+          image: base64Image,
+          ...parsed
+        });
+
+        setIsAnalyzing(false);
+        return; // ¡Éxito! Salimos de la función
+
+      } catch (err) {
+        lastError = err;
+        console.error(`Error con ${modelName}:`, err);
       }
-
-      const data = await response.json();
-      const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-      if (!rawText) {
-        throw new Error('La IA no devolvió ningún resultado.');
-      }
-
-      const parsed = JSON.parse(rawText);
-
-      setCurrentMeal({
-        id: 'meal-' + Date.now(),
-        image: base64Image,
-        ...parsed
-      });
-
-    } catch (err) {
-      console.error("Error Gemini:", err);
-      setErrorMessage(`Error de análisis: ${err.message}`);
-    } finally {
-      setIsAnalyzing(false);
     }
+
+    // Si fallan todos los intentos por alta demanda
+    setErrorMessage(`Servidores de Google saturados momentáneamente. Por favor, intenta subir la foto de nuevo en unos segundos.`);
+    setIsAnalyzing(false);
   };
 
   const handleIngredientGramChange = (ingId, newGrams) => {
