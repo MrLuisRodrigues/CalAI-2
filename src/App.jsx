@@ -52,7 +52,6 @@ export default function App() {
     }
 
     try {
-      // Limpiar prefijo base64
       const base64Data = base64Image.replace(/^data:image\/(png|jpeg|jpg|webp);base64,/, "");
 
       const systemPrompt = `Eres un sistema avanzado de visión por computadora y nutrición. Analiza la imagen entregada e identifica los alimentos reales visibles.
@@ -76,6 +75,7 @@ Debes responder ÚNICAMENTE con un objeto JSON estricto sin ningún texto o form
   ]
 }`;
 
+      // Usando gemini-2.5-flash en la API v1beta
       const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${activeKey}`;
 
       const response = await fetch(apiUrl, {
