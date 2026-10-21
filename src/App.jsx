@@ -76,8 +76,7 @@ Debes responder ÚNICAMENTE con un objeto JSON estricto sin ningún texto o form
 }`;
 
       // Usando gemini-2.5-flash en la API v1beta
-      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${activeKey}`;
-
+      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${activeKey}`;
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
