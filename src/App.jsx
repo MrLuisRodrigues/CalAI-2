@@ -17,12 +17,18 @@ import {
   BarChart2,
   Edit3,
   User,
-  Scale,
-  Activity,
-  ChevronLeft,
-  ChevronRight
+  Activity
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
+
+// Función para obtener la fecha local exacta (YYYY-MM-DD) sin desfase UTC
+const getLocalDateString = (d = new Date()) => {
+  const date = new Date(d);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 export default function App() {
   const [session, setSession] = useState(null);
@@ -33,7 +39,7 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
 
-  // Navegación
+  // Navegación y Fecha Seleccionada
   const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard', 'camera', 'analysis', 'stats', 'profile'
   const [selectedDate, setSelectedDate] = useState(() => getLocalDateString());
 
@@ -52,49 +58,45 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState('');
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
+    supabase.auth.getSession().then(({ data }) => {
+      const currentSession = data?.session || null;
+      setSession(currentSession);
       setLoadingSession(false);
-      if (session) {
-        fetchProfile(session.user.id);
-        fetchMeals(session.user.id);
-        fetchWaterLogs(session.user.id);
+      if (currentSession) {
+        fetchProfile(currentSession.user.id);
+        fetchMeals(currentSession.user.id);
+        fetchWaterLogs(currentSession.user.id);
       }
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (session) {
-        fetchProfile(session.user.id);
-        fetchMeals(session.user.id);
-        fetchWaterLogs(session.user.id);
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, currentSession) => {
+      setSession(currentSession);
+      if (currentSession) {
+        fetchProfile(currentSession.user.id);
+        fetchMeals(currentSession.user.id);
+        fetchWaterLogs(currentSession.user.id);
       } else {
         setLoggedMeals([]);
         setWaterLogs([]);
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      if (authListener && authListener.subscription) {
+        authListener.subscription.unsubscribe();
+      }
+    };
   }, []);
-
-    // Función para obtener la fecha local en formato YYYY-MM-DD
-  const getLocalDateString = (d = new Date()) => {
-    const date = new Date(d);
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  };
 
   // Recalcular meta calórica según BMR (Mifflin-St Jeor)
   useEffect(() => {
-    const bmr = 10 * profile.weight + 6.25 * profile.height - 5 * profile.age + 5; // Fórmula para hombres/promedio
-    let calories = Math.round(bmr * 1.375); // Actividad ligera
+    const bmr = 10 * profile.weight + 6.25 * profile.height - 5 * profile.age + 5;
+    let calories = Math.round(bmr * 1.375);
     
     if (profile.goal === 'perder') calories -= 400;
     if (profile.goal === 'ganar') calories += 400;
 
-    const protein = Math.round(profile.weight * 2); // 2g por kg
+    const protein = Math.round(profile.weight * 2);
     const fat = Math.round((calories * 0.25) / 9);
     const carbs = Math.round((calories - (protein * 4 + fat * 9)) / 4);
 
@@ -102,40 +104,56 @@ export default function App() {
   }, [profile]);
 
   const fetchProfile = async (userId) => {
-    const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
-    if (data) {
-      setProfile({ age: data.age, weight: data.weight_kg, height: data.height_cm, goal: data.goal });
+    try {
+      const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
+      if (data) {
+        setProfile({ age: data.age, weight: data.weight_kg, height: data.height_cm, goal: data.goal });
+      }
+    } catch (e) {
+      console.warn("Perfil no encontrado o error:", e);
     }
   };
 
   const saveProfile = async () => {
     if (!session) return;
-    await supabase.from('profiles').upsert({
-      id: session.user.id,
-      age: profile.age,
-      weight_kg: profile.weight,
-      height_cm: profile.height,
-      goal: profile.goal,
-      updated_at: new Date().toISOString()
-    });
-    alert('¡Métricas actualizadas correctamente!');
+    try {
+      await supabase.from('profiles').upsert({
+        id: session.user.id,
+        age: profile.age,
+        weight_kg: profile.weight,
+        height_cm: profile.height,
+        goal: profile.goal,
+        updated_at: new Date().toISOString()
+      });
+      alert('¡Métricas actualizadas correctamente!');
+    } catch (e) {
+      console.error("Error al guardar perfil:", e);
+    }
   };
 
   const fetchMeals = async (userId) => {
-    const { data } = await supabase.from('meals').select('*').eq('user_id', userId).order('created_at', { ascending: false });
-    if (data) setLoggedMeals(data);
+    try {
+      const { data, error: fetchErr } = await supabase.from('meals').select('*').eq('user_id', userId).order('created_at', { ascending: false });
+      if (!fetchErr && data) setLoggedMeals(data);
+    } catch (e) {
+      console.error("Error al cargar comidas:", e);
+    }
   };
 
   const fetchWaterLogs = async (userId) => {
-    const { data } = await supabase.from('water_logs').select('*').eq('user_id', userId).order('created_at', { ascending: false });
-    if (data) setWaterLogs(data);
+    try {
+      const { data, error: fetchErr } = await supabase.from('water_logs').select('*').eq('user_id', userId).order('created_at', { ascending: false });
+      if (!fetchErr && data) setWaterLogs(data);
+    } catch (e) {
+      console.error("Error al cargar agua:", e);
+    }
   };
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setAuthError('');
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) setAuthError(error.message);
+    const { error: signErr } = await supabase.auth.signInWithPassword({ email, password });
+    if (signErr) setAuthError(signErr.message);
   };
 
   const handleLogout = async () => {
@@ -144,8 +162,12 @@ export default function App() {
 
   const addWater = async (amountMl) => {
     if (!session) return;
-    const { data } = await supabase.from('water_logs').insert([{ user_id: session.user.id, amount_ml: amountMl }]).select();
-    if (data) setWaterLogs([data[0], ...waterLogs]);
+    try {
+      const { data, error: insertErr } = await supabase.from('water_logs').insert([{ user_id: session.user.id, amount_ml: amountMl }]).select();
+      if (!insertErr && data) setWaterLogs([data[0], ...waterLogs]);
+    } catch (e) {
+      console.error("Error añadiendo agua:", e);
+    }
   };
 
   const analyzeFoodImage = async (base64Image) => {
@@ -199,6 +221,7 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
       setIsAnalyzing(false);
 
     } catch (err) {
+      console.warn("Usando motor de respaldo:", err);
       setTimeout(() => {
         setCurrentMeal({
           image: base64Image,
@@ -247,38 +270,42 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
   const saveMealToLog = async () => {
     if (!currentMeal || !session) return;
 
-    if (editingMealId) {
-      const { data, error } = await supabase.from('meals').update({
-        name: currentMeal.name,
-        calories: currentMeal.totales.calorias,
-        protein: currentMeal.totales.proteinas,
-        carbs: currentMeal.totales.carbohidratos,
-        fat: currentMeal.totales.grasas
-      }).eq('id', editingMealId).select();
+    try {
+      if (editingMealId) {
+        const { data, error: updateErr } = await supabase.from('meals').update({
+          name: currentMeal.name,
+          calories: currentMeal.totales.calorias,
+          protein: currentMeal.totales.proteinas,
+          carbs: currentMeal.totales.carbohidratos,
+          fat: currentMeal.totales.grasas
+        }).eq('id', editingMealId).select();
 
-      if (!error && data) {
-        setLoggedMeals(loggedMeals.map(m => m.id === editingMealId ? data[0] : m));
-        setEditingMealId(null);
-        setCurrentMeal(null);
-        setActiveTab('dashboard');
-      }
-    } else {
-      const newEntry = {
-        user_id: session.user.id,
-        name: currentMeal.name,
-        image: currentMeal.image,
-        calories: currentMeal.totales.calorias,
-        protein: currentMeal.totales.proteinas,
-        carbs: currentMeal.totales.carbohidratos,
-        fat: currentMeal.totales.grasas
-      };
+        if (!updateErr && data) {
+          setLoggedMeals(loggedMeals.map(m => m.id === editingMealId ? data[0] : m));
+          setEditingMealId(null);
+          setCurrentMeal(null);
+          setActiveTab('dashboard');
+        }
+      } else {
+        const newEntry = {
+          user_id: session.user.id,
+          name: currentMeal.name,
+          image: currentMeal.image,
+          calories: currentMeal.totales.calorias,
+          protein: currentMeal.totales.proteinas,
+          carbs: currentMeal.totales.carbohidratos,
+          fat: currentMeal.totales.grasas
+        };
 
-      const { data, error } = await supabase.from('meals').insert([newEntry]).select();
-      if (!error && data) {
-        setLoggedMeals([data[0], ...loggedMeals]);
-        setCurrentMeal(null);
-        setActiveTab('dashboard');
+        const { data, error: insertErr } = await supabase.from('meals').insert([newEntry]).select();
+        if (!insertErr && data) {
+          setLoggedMeals([data[0], ...loggedMeals]);
+          setCurrentMeal(null);
+          setActiveTab('dashboard');
+        }
       }
+    } catch (e) {
+      console.error("Error guardando comida:", e);
     }
   };
 
@@ -297,12 +324,16 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
   };
 
   const deleteMeal = async (id) => {
-    const { error } = await supabase.from('meals').delete().eq('id', id);
-    if (!error) setLoggedMeals(loggedMeals.filter(m => m.id !== id));
+    try {
+      const { error: delErr } = await supabase.from('meals').delete().eq('id', id);
+      if (!delErr) setLoggedMeals(loggedMeals.filter(m => m.id !== id));
+    } catch (e) {
+      console.error("Error eliminando comida:", e);
+    }
   };
 
-  // Generar la lista de los últimos 7 días para el nuevo calendario
-    const getLast7Days = () => {
+  // Generar la lista de los últimos 7 días
+  const getLast7Days = () => {
     const days = [];
     for (let i = 6; i >= 0; i--) {
       const d = new Date();
@@ -312,22 +343,22 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
     return days;
   };
 
-  // Determinar color de la meta según las calorías consumidas ese día
+  // Determinar color de estado del día
   const getDayStatusColor = (dateStr) => {
-    const dayMeals = loggedMeals.filter(m => m.created_at.split('T')[0] === dateStr);
+    const dayMeals = loggedMeals.filter(m => getLocalDateString(m.created_at) === dateStr);
     const dayCalories = dayMeals.reduce((sum, m) => sum + m.calories, 0);
 
-    if (dayCalories === 0) return 'border-slate-800 text-slate-500 bg-slate-900'; // Sin registro
+    if (dayCalories === 0) return 'border-slate-800 text-slate-500 bg-slate-900';
 
     const diff = Math.abs(dayCalories - calculatedTarget.targetCalories);
     const percentage = (diff / calculatedTarget.targetCalories) * 100;
 
-    if (percentage <= 10) return 'border-emerald-500 bg-emerald-500/20 text-emerald-400 font-bold'; // Verde: Objetivo perfecto
-    if (percentage <= 25) return 'border-amber-500 bg-amber-500/20 text-amber-400 font-bold'; // Amarillo: Cerca del objetivo
-    return 'border-rose-500 bg-rose-500/20 text-rose-400 font-bold'; // Rojo: Muy por encima o muy por debajo
+    if (percentage <= 10) return 'border-emerald-500 bg-emerald-500/20 text-emerald-400 font-bold';
+    if (percentage <= 25) return 'border-amber-500 bg-amber-500/20 text-amber-400 font-bold';
+    return 'border-rose-500 bg-rose-500/20 text-rose-400 font-bold';
   };
 
-  // Datos filtrados para el día seleccionado
+  // Datos filtrados por la fecha local seleccionada
   const mealsForSelectedDate = loggedMeals.filter(m => getLocalDateString(m.created_at) === selectedDate);
   const waterForSelectedDate = waterLogs.filter(w => getLocalDateString(w.created_at) === selectedDate).reduce((sum, w) => sum + w.amount_ml, 0);
 
@@ -355,7 +386,7 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
               <Lock className="w-6 h-6 text-slate-950" />
             </div>
             <h1 className="text-xl font-bold tracking-wider text-white">CAL AI - Privado</h1>
-            <p className="text-xs text-slate-400">Inicia sesión para ver tu diario de salud</p>
+            <p className="text-xs text-slate-400">Inicia sesión para acceder a tu diario</p>
           </div>
 
           <form onSubmit={handleLogin} className="space-y-4">
@@ -415,7 +446,7 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
           {activeTab === 'dashboard' && (
             <div className="space-y-6">
 
-              {/* NUEVO CALENDARIO VISUAL EN CIRCULITOS */}
+              {/* CALENDARIO DE CIRCULITOS */}
               <div className="p-4 rounded-3xl bg-slate-800/80 border border-slate-700/50 space-y-3">
                 <div className="flex justify-between items-center text-xs font-bold text-slate-400">
                   <span>Seleccionar Día</span>
@@ -424,9 +455,9 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
 
                 <div className="flex justify-between items-center space-x-1">
                   {getLast7Days().map((dateStr) => {
-                    const dateObj = new Date(dateStr + 'T00:00:00');
+                    const [y, m, d] = dateStr.split('-').map(Number);
+                    const dateObj = new Date(y, m - 1, d);
                     const dayName = dateObj.toLocaleDateString('es-ES', { weekday: 'narrow' });
-                    const dayNum = dateObj.getDate();
                     const isSelected = selectedDate === dateStr;
                     const statusClass = getDayStatusColor(dateStr);
 
@@ -438,7 +469,7 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
                       >
                         <span className="text-[10px] uppercase font-semibold text-slate-400 mb-1">{dayName}</span>
                         <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs">
-                          {dayNum}
+                          {d}
                         </div>
                       </button>
                     );
@@ -491,7 +522,7 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
                 </div>
               </div>
 
-              {/* SECCIÓN DE REGISTRO DE AGUA */}
+              {/* SECCIÓN DE AGUA */}
               <div className="p-5 rounded-3xl bg-slate-800/80 border border-slate-700/50 space-y-3">
                 <div className="flex justify-between items-center">
                   <div className="flex items-center space-x-2">
@@ -532,9 +563,9 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
                 </button>
               </div>
 
-              {/* LISTA DE COMIDAS REGISTRADAS */}
+              {/* COMIDAS REGISTRADAS */}
               <div>
-                <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-3">Comidas de la Fecha</h3>
+                <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-3">Comidas del Día</h3>
                 {mealsForSelectedDate.length === 0 ? (
                   <p className="text-xs text-slate-500 text-center py-6">No hay comidas registradas para este día.</p>
                 ) : (
@@ -665,7 +696,7 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
             </div>
           )}
 
-          {/* TAB: MÉTRICAS FÍSICAS Y ANÁLISIS CORPORAL */}
+          {/* TAB: MÉTRICAS PERSONALES */}
           {activeTab === 'profile' && (
             <div className="space-y-5">
               <div className="flex items-center space-x-2">
@@ -763,7 +794,7 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
                 <div className="p-4 bg-slate-800/80 border border-slate-700/50 rounded-2xl space-y-1">
                   <p className="text-[10px] font-bold text-slate-400 uppercase">Promedio Diario Kcal</p>
                   <p className="text-2xl font-extrabold text-amber-400">
-                    {loggedMeals.length > 0 ? Math.round(loggedMeals.reduce((acc, m) => acc + m.calories, 0) / Math.max(1, new Set(loggedMeals.map(m => m.created_at.split('T')[0])).size)) : 0}
+                    {loggedMeals.length > 0 ? Math.round(loggedMeals.reduce((acc, m) => acc + m.calories, 0) / Math.max(1, new Set(loggedMeals.map(m => getLocalDateString(m.created_at))).size)) : 0}
                   </p>
                 </div>
               </div>
