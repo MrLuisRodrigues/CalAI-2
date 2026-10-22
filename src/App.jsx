@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Camera,
   Plus,
@@ -11,56 +11,70 @@ import {
   Zap,
   ArrowLeft,
   Lock,
-  User,
   LogOut,
   AlertCircle
 } from 'lucide-react';
+import { supabase } from './supabaseClient';
 
 export default function App() {
-  // Estado de Autenticación (Login local privado)
-  const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    return localStorage.getItem('calai_auth') === 'true';
-  });
-  const [loginEmail, setLoginEmail] = useState('');
-  const [loginPass, setLoginPass] = useState('');
-  const [loginError, setLoginError] = useState('');
+  const [session, setSession] = useState(null);
+  const [loadingSession, setLoadingSession] = useState(true);
 
-  // App Navigation & Data State
+  // Estados de Login con Supabase
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+
+  // Estados de la App
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [user, setUser] = useState({ name: 'Luis Rodrigues', targetCalories: 2200, targetProtein: 150, targetCarbs: 220, targetFat: 70 });
-  
-  // API Key oculta internamente (lee de Cloudflare o usa fallback interno seguro)
-  const geminiApiKey = (import.meta.env && import.meta.env.VITE_GEMINI_API_KEY) || "AIzaSy_Internal_Protected_Key";
-
+  const [userTarget] = useState({ targetCalories: 2200, targetProtein: 150, targetCarbs: 220, targetFat: 70 });
   const [loggedMeals, setLoggedMeals] = useState([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [currentMeal, setCurrentMeal] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
 
-  // Manejo de Login (puedes definir el usuario y contraseña que prefieras)
-  const handleLogin = (e) => {
+  // Verificar sesión activa al cargar
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setLoadingSession(false);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Iniciar sesión con Supabase Auth
+  const handleLogin = async (e) => {
     e.preventDefault();
-    // Credenciales de acceso privado para ti
-    if (loginEmail === 'luis@calai.com' && loginPass === 'Luis2901') {
-      setIsAuthenticated(true);
-      localStorage.setItem('calai_auth', 'true');
-      setLoginError('');
-    } else {
-      setLoginError('Credenciales incorrectas. Acceso restringido.');
+    setAuthError('');
+    
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      setAuthError(error.message);
     }
   };
 
-  const handleLogout = () => {
-    setIsAuthenticated(false);
-    localStorage.removeItem('calai_auth');
+  // Cerrar sesión
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
   };
 
-  // Escáner de Comida con Gemini o Respaldo Inteligente
+  // Escáner con IA o Respaldo Inteligente
   const analyzeFoodImage = async (base64Image) => {
     setIsAnalyzing(true);
     setErrorMessage('');
     setCurrentMeal(null);
     setActiveTab('analysis');
+
+    const geminiApiKey = import.meta.env.VITE_GEMINI_API_KEY || "AIzaSy_Internal_Protected_Key";
 
     try {
       const base64Data = base64Image.replace(/^data:image\/(png|jpeg|jpg|webp);base64,/, "");
@@ -93,9 +107,7 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
         })
       });
 
-      if (!response.ok) {
-        throw new Error('Servidores de Google saturados o límite alcanzado.');
-      }
+      if (!response.ok) throw new Error('Servidores de Google saturados.');
 
       const data = await response.json();
       const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -183,10 +195,18 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
   const totalCarbsToday = loggedMeals.reduce((sum, m) => sum + m.carbs, 0);
   const totalFatToday = loggedMeals.reduce((sum, m) => sum + m.fat, 0);
 
-  const caloriePct = Math.min(100, Math.round((totalCaloriesToday / user.targetCalories) * 100));
+  const caloriePct = Math.min(100, Math.round((totalCaloriesToday / userTarget.targetCalories) * 100));
 
-  // SI NO ESTÁ AUTENTICADO, MUESTRA LA PANTALLA DE LOGIN PRIVADA
-  if (!isAuthenticated) {
+  if (loadingSession) {
+    return (
+      <div className="flex justify-center items-center bg-slate-950 text-slate-100 min-h-screen">
+        <div className="w-8 h-8 border-4 border-emerald-500/20 border-t-emerald-400 rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  // PANTALLA DE LOGIN CON SUPABASE
+  if (!session) {
     return (
       <div className="flex justify-center items-center bg-slate-950 text-slate-100 min-h-screen font-sans px-4">
         <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl space-y-6">
@@ -194,8 +214,8 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
             <div className="w-12 h-12 bg-emerald-500 rounded-2xl mx-auto flex items-center justify-center shadow-lg shadow-emerald-500/30">
               <Lock className="w-6 h-6 text-slate-950" />
             </div>
-            <h1 className="text-xl font-bold tracking-wider text-white">CAL AI - Privado</h1>
-            <p className="text-xs text-slate-400">Ingresa tus credenciales para acceder al sistema</p>
+            <h1 className="text-xl font-bold tracking-wider text-white">CAL AI - Supabase Auth</h1>
+            <p className="text-xs text-slate-400">Inicia sesión con tu cuenta autorizada</p>
           </div>
 
           <form onSubmit={handleLogin} className="space-y-4">
@@ -204,8 +224,8 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
               <input
                 type="email"
                 required
-                value={loginEmail}
-                onChange={(e) => setLoginEmail(e.target.value)}
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 placeholder="tu@correo.com"
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2.5 px-3 text-sm text-white focus:outline-none focus:border-emerald-500"
               />
@@ -216,32 +236,30 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
               <input
                 type="password"
                 required
-                value={loginPass}
-                onChange={(e) => setLoginPass(e.target.value)}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2.5 px-3 text-sm text-white focus:outline-none focus:border-emerald-500"
               />
             </div>
 
-            {loginError && (
-              <p className="text-xs text-rose-400 font-semibold text-center">{loginError}</p>
+            {authError && (
+              <p className="text-xs text-rose-400 font-semibold text-center">{authError}</p>
             )}
 
             <button
               type="submit"
               className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-sm rounded-xl shadow-lg transition"
             >
-              Iniciar Sesión
+              Entrar al Sistema
             </button>
           </form>
-
-          <p className="text-[10px] text-center text-slate-600">Acceso restringido exclusivamente para uso personal.</p>
         </div>
       </div>
     );
   }
 
-  // APLICACIÓN PRINCIPAL (UNA VEZ LOGUEADO)
+  // APLICACIÓN PRINCIPAL (AUTENTICADA CON SUPABASE)
   return (
     <div className="flex justify-center bg-slate-950 text-slate-100 min-h-screen font-sans">
       <div className="w-full max-w-md bg-slate-900 border-x border-slate-800 min-h-screen flex flex-col justify-between relative shadow-2xl pb-20">
@@ -263,7 +281,6 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
         {/* MAIN BODY */}
         <main className="flex-1 overflow-y-auto px-4 py-4">
 
-          {/* DASHBOARD TAB */}
           {activeTab === 'dashboard' && (
             <div className="space-y-6">
               <div className="p-6 rounded-3xl bg-slate-800/80 border border-slate-700/50 shadow-xl">
@@ -290,7 +307,7 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
                     </svg>
                     <div className="absolute flex flex-col items-center text-center">
                       <span className="text-3xl font-extrabold text-white">{totalCaloriesToday}</span>
-                      <span className="text-[10px] uppercase font-bold text-slate-400">/ {user.targetCalories} kcal</span>
+                      <span className="text-[10px] uppercase font-bold text-slate-400">/ {userTarget.targetCalories} kcal</span>
                     </div>
                   </div>
 
@@ -301,7 +318,7 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
                     </div>
                     <div>
                       <p className="text-xs text-slate-400">Restante</p>
-                      <p className="text-sm font-semibold text-slate-300">{Math.max(0, user.targetCalories - totalCaloriesToday)} kcal</p>
+                      <p className="text-sm font-semibold text-slate-300">{Math.max(0, userTarget.targetCalories - totalCaloriesToday)} kcal</p>
                     </div>
                   </div>
                 </div>
@@ -346,7 +363,6 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
             </div>
           )}
 
-          {/* CAMERA TAB */}
           {activeTab === 'camera' && (
             <div className="space-y-5">
               <div className="flex items-center space-x-2">
@@ -381,7 +397,6 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
             </div>
           )}
 
-          {/* ANALYSIS TAB */}
           {activeTab === 'analysis' && (
             <div className="space-y-5">
               {isAnalyzing && (
