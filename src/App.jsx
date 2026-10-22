@@ -33,36 +33,45 @@ export default function App() {
   const [currentMeal, setCurrentMeal] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
 
-  // Verificar sesión activa al cargar
+  // Verificar sesión y cargar comidas al iniciar
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setLoadingSession(false);
+      if (session) fetchMeals(session.user.id);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
+      if (session) fetchMeals(session.user.id);
+      else setLoggedMeals([]);
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  // Iniciar sesión con Supabase Auth
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    setAuthError('');
-    
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+  // Cargar comidas desde Supabase
+  const fetchMeals = async (userId) => {
+    const { data, error } = await supabase
+      .from('meals')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
 
     if (error) {
-      setAuthError(error.message);
+      console.error('Error cargando comidas:', error.message);
+    } else {
+      setLoggedMeals(data || []);
     }
   };
 
-  // Cerrar sesión
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setAuthError('');
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) setAuthError(error.message);
+  };
+
   const handleLogout = async () => {
     await supabase.auth.signOut();
   };
@@ -173,11 +182,12 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
     });
   };
 
-  const saveMealToLog = () => {
-    if (!currentMeal) return;
+  // Guardar comida en la base de datos de Supabase
+  const saveMealToLog = async () => {
+    if (!currentMeal || !session) return;
+
     const newEntry = {
-      id: currentMeal.id,
-      date: new Date().toISOString(),
+      user_id: session.user.id,
       name: currentMeal.name,
       image: currentMeal.image,
       calories: currentMeal.totales.calorias,
@@ -185,9 +195,34 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
       carbs: currentMeal.totales.carbohidratos,
       fat: currentMeal.totales.grasas
     };
-    setLoggedMeals([newEntry, ...loggedMeals]);
-    setCurrentMeal(null);
-    setActiveTab('dashboard');
+
+    const { data, error } = await supabase
+      .from('meals')
+      .insert([newEntry])
+      .select();
+
+    if (error) {
+      console.error('Error al guardar en Supabase:', error.message);
+      alert('Hubo un error al guardar la comida en la base de datos.');
+    } else if (data) {
+      setLoggedMeals([data[0], ...loggedMeals]);
+      setCurrentMeal(null);
+      setActiveTab('dashboard');
+    }
+  };
+
+  // Eliminar comida de Supabase
+  const deleteMeal = async (id) => {
+    const { error } = await supabase
+      .from('meals')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error('Error al eliminar:', error.message);
+    } else {
+      setLoggedMeals(loggedMeals.filter(m => m.id !== id));
+    }
   };
 
   const totalCaloriesToday = loggedMeals.reduce((sum, m) => sum + m.calories, 0);
@@ -205,7 +240,6 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
     );
   }
 
-  // PANTALLA DE LOGIN CON SUPABASE
   if (!session) {
     return (
       <div className="flex justify-center items-center bg-slate-950 text-slate-100 min-h-screen font-sans px-4">
@@ -214,7 +248,7 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
             <div className="w-12 h-12 bg-emerald-500 rounded-2xl mx-auto flex items-center justify-center shadow-lg shadow-emerald-500/30">
               <Lock className="w-6 h-6 text-slate-950" />
             </div>
-            <h1 className="text-xl font-bold tracking-wider text-white">CAL AI - Supabase Auth</h1>
+            <h1 className="text-xl font-bold tracking-wider text-white">CAL AI - Supabase</h1>
             <p className="text-xs text-slate-400">Inicia sesión con tu cuenta autorizada</p>
           </div>
 
@@ -259,12 +293,10 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
     );
   }
 
-  // APLICACIÓN PRINCIPAL (AUTENTICADA CON SUPABASE)
   return (
     <div className="flex justify-center bg-slate-950 text-slate-100 min-h-screen font-sans">
       <div className="w-full max-w-md bg-slate-900 border-x border-slate-800 min-h-screen flex flex-col justify-between relative shadow-2xl pb-20">
 
-        {/* HEADER */}
         <header className="px-6 pt-5 pb-3 flex items-center justify-between border-b border-slate-800 bg-slate-900/80 backdrop-blur-md sticky top-0 z-30">
           <div className="flex items-center space-x-2">
             <div className="p-1.5 bg-emerald-500 rounded-xl">
@@ -278,7 +310,6 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
           </button>
         </header>
 
-        {/* MAIN BODY */}
         <main className="flex-1 overflow-y-auto px-4 py-4">
 
           {activeTab === 'dashboard' && (
@@ -338,9 +369,9 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
               </div>
 
               <div>
-                <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-3">Registros de hoy</h3>
+                <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-3">Registros en la Nube</h3>
                 {loggedMeals.length === 0 ? (
-                  <p className="text-xs text-slate-500 text-center py-6">No has registrado ninguna comida hoy.</p>
+                  <p className="text-xs text-slate-500 text-center py-6">No hay registros guardados en Supabase.</p>
                 ) : (
                   <div className="space-y-3">
                     {loggedMeals.map((meal) => (
@@ -352,7 +383,7 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
                             <p className="text-xs text-emerald-400 font-bold">{meal.calories} kcal</p>
                           </div>
                         </div>
-                        <button onClick={() => setLoggedMeals(loggedMeals.filter(m => m.id !== meal.id))} className="text-slate-500 hover:text-rose-400">
+                        <button onClick={() => deleteMeal(meal.id)} className="text-slate-500 hover:text-rose-400">
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
@@ -461,7 +492,7 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
                   </div>
 
                   <button onClick={saveMealToLog} className="w-full py-3.5 bg-emerald-500 text-slate-950 font-bold text-sm rounded-2xl">
-                    Guardar en mi Diario
+                    Guardar en la Nube
                   </button>
                 </div>
               )}
@@ -470,7 +501,6 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
 
         </main>
 
-        {/* BOTTOM NAV */}
         <nav className="absolute bottom-0 left-0 right-0 h-16 bg-slate-900 border-t border-slate-800 flex items-center justify-around px-4 z-30">
           <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center ${activeTab === 'dashboard' ? 'text-emerald-400' : 'text-slate-500'}`}>
             <PieChart className="w-5 h-5" />
