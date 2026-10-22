@@ -14,10 +14,13 @@ import {
   LogOut,
   AlertCircle,
   Droplet,
-  Calendar,
   BarChart2,
   Edit3,
-  X
+  User,
+  Scale,
+  Activity,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
@@ -31,12 +34,13 @@ export default function App() {
   const [authError, setAuthError] = useState('');
 
   // Navegación
-  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard', 'camera', 'analysis', 'stats'
+  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard', 'camera', 'analysis', 'stats', 'profile'
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
 
-  // Metas de usuario
-  const [userTarget] = useState({ targetCalories: 2200, targetProtein: 150, targetCarbs: 220, targetFat: 70, targetWaterMl: 2500 });
-  
+  // Métricas del usuario
+  const [profile, setProfile] = useState({ age: 25, weight: 70, height: 170, goal: 'mantener' });
+  const [calculatedTarget, setCalculatedTarget] = useState({ targetCalories: 2000, protein: 150, carbs: 200, fat: 65 });
+
   // Datos
   const [loggedMeals, setLoggedMeals] = useState([]);
   const [waterLogs, setWaterLogs] = useState([]);
@@ -52,6 +56,7 @@ export default function App() {
       setSession(session);
       setLoadingSession(false);
       if (session) {
+        fetchProfile(session.user.id);
         fetchMeals(session.user.id);
         fetchWaterLogs(session.user.id);
       }
@@ -60,6 +65,7 @@ export default function App() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       if (session) {
+        fetchProfile(session.user.id);
         fetchMeals(session.user.id);
         fetchWaterLogs(session.user.id);
       } else {
@@ -71,26 +77,49 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Cargar comidas
-  const fetchMeals = async (userId) => {
-    const { data, error } = await supabase
-      .from('meals')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
+  // Recalcular meta calórica según BMR (Mifflin-St Jeor)
+  useEffect(() => {
+    const bmr = 10 * profile.weight + 6.25 * profile.height - 5 * profile.age + 5; // Fórmula para hombres/promedio
+    let calories = Math.round(bmr * 1.375); // Actividad ligera
+    
+    if (profile.goal === 'perder') calories -= 400;
+    if (profile.goal === 'ganar') calories += 400;
 
-    if (!error && data) setLoggedMeals(data);
+    const protein = Math.round(profile.weight * 2); // 2g por kg
+    const fat = Math.round((calories * 0.25) / 9);
+    const carbs = Math.round((calories - (protein * 4 + fat * 9)) / 4);
+
+    setCalculatedTarget({ targetCalories: calories, protein, carbs, fat });
+  }, [profile]);
+
+  const fetchProfile = async (userId) => {
+    const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
+    if (data) {
+      setProfile({ age: data.age, weight: data.weight_kg, height: data.height_cm, goal: data.goal });
+    }
   };
 
-  // Cargar agua
-  const fetchWaterLogs = async (userId) => {
-    const { data, error } = await supabase
-      .from('water_logs')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
+  const saveProfile = async () => {
+    if (!session) return;
+    await supabase.from('profiles').upsert({
+      id: session.user.id,
+      age: profile.age,
+      weight_kg: profile.weight,
+      height_cm: profile.height,
+      goal: profile.goal,
+      updated_at: new Date().toISOString()
+    });
+    alert('¡Métricas actualizadas correctamente!');
+  };
 
-    if (!error && data) setWaterLogs(data);
+  const fetchMeals = async (userId) => {
+    const { data } = await supabase.from('meals').select('*').eq('user_id', userId).order('created_at', { ascending: false });
+    if (data) setLoggedMeals(data);
+  };
+
+  const fetchWaterLogs = async (userId) => {
+    const { data } = await supabase.from('water_logs').select('*').eq('user_id', userId).order('created_at', { ascending: false });
+    if (data) setWaterLogs(data);
   };
 
   const handleLogin = async (e) => {
@@ -104,21 +133,12 @@ export default function App() {
     await supabase.auth.signOut();
   };
 
-  // Agregar Agua
   const addWater = async (amountMl) => {
     if (!session) return;
-    const newLog = {
-      user_id: session.user.id,
-      amount_ml: amountMl
-    };
-
-    const { data, error } = await supabase.from('water_logs').insert([newLog]).select();
-    if (!error && data) {
-      setWaterLogs([data[0], ...waterLogs]);
-    }
+    const { data } = await supabase.from('water_logs').insert([{ user_id: session.user.id, amount_ml: amountMl }]).select();
+    if (data) setWaterLogs([data[0], ...waterLogs]);
   };
 
-  // Analizar Foto
   const analyzeFoodImage = async (base64Image) => {
     setIsAnalyzing(true);
     setErrorMessage('');
@@ -215,23 +235,17 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
     setCurrentMeal({ ...currentMeal, ingredientes: updatedIngs, totales: newTotals });
   };
 
-  // Guardar o Actualizar Comida
   const saveMealToLog = async () => {
     if (!currentMeal || !session) return;
 
     if (editingMealId) {
-      // Actualizar comida existente
-      const { data, error } = await supabase
-        .from('meals')
-        .update({
-          name: currentMeal.name,
-          calories: currentMeal.totales.calorias,
-          protein: currentMeal.totales.proteinas,
-          carbs: currentMeal.totales.carbohidratos,
-          fat: currentMeal.totales.grasas
-        })
-        .eq('id', editingMealId)
-        .select();
+      const { data, error } = await supabase.from('meals').update({
+        name: currentMeal.name,
+        calories: currentMeal.totales.calorias,
+        protein: currentMeal.totales.proteinas,
+        carbs: currentMeal.totales.carbohidratos,
+        fat: currentMeal.totales.grasas
+      }).eq('id', editingMealId).select();
 
       if (!error && data) {
         setLoggedMeals(loggedMeals.map(m => m.id === editingMealId ? data[0] : m));
@@ -240,7 +254,6 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
         setActiveTab('dashboard');
       }
     } else {
-      // Crear nueva comida
       const newEntry = {
         user_id: session.user.id,
         name: currentMeal.name,
@@ -279,23 +292,42 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
     if (!error) setLoggedMeals(loggedMeals.filter(m => m.id !== id));
   };
 
-  // Filtrado de Datos por Fecha Elegida
-  const mealsForSelectedDate = loggedMeals.filter(m => {
-    const mealDate = new Date(m.created_at).toISOString().split('T')[0];
-    return mealDate === selectedDate;
-  });
+  // Generar la lista de los últimos 7 días para el nuevo calendario
+  const getLast7Days = () => {
+    const days = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      days.push(d.toISOString().split('T')[0]);
+    }
+    return days;
+  };
 
-  const waterForSelectedDate = waterLogs
-    .filter(w => new Date(w.created_at).toISOString().split('T')[0] === selectedDate)
-    .reduce((sum, w) => sum + w.amount_ml, 0);
+  // Determinar color de la meta según las calorías consumidas ese día
+  const getDayStatusColor = (dateStr) => {
+    const dayMeals = loggedMeals.filter(m => m.created_at.split('T')[0] === dateStr);
+    const dayCalories = dayMeals.reduce((sum, m) => sum + m.calories, 0);
+
+    if (dayCalories === 0) return 'border-slate-800 text-slate-500 bg-slate-900'; // Sin registro
+
+    const diff = Math.abs(dayCalories - calculatedTarget.targetCalories);
+    const percentage = (diff / calculatedTarget.targetCalories) * 100;
+
+    if (percentage <= 10) return 'border-emerald-500 bg-emerald-500/20 text-emerald-400 font-bold'; // Verde: Objetivo perfecto
+    if (percentage <= 25) return 'border-amber-500 bg-amber-500/20 text-amber-400 font-bold'; // Amarillo: Cerca del objetivo
+    return 'border-rose-500 bg-rose-500/20 text-rose-400 font-bold'; // Rojo: Muy por encima o muy por debajo
+  };
+
+  // Datos filtrados para el día seleccionado
+  const mealsForSelectedDate = loggedMeals.filter(m => m.created_at.split('T')[0] === selectedDate);
+  const waterForSelectedDate = waterLogs.filter(w => w.created_at.split('T')[0] === selectedDate).reduce((sum, w) => sum + w.amount_ml, 0);
 
   const totalCaloriesToday = mealsForSelectedDate.reduce((sum, m) => sum + m.calories, 0);
   const totalProteinToday = mealsForSelectedDate.reduce((sum, m) => sum + m.protein, 0);
   const totalCarbsToday = mealsForSelectedDate.reduce((sum, m) => sum + m.carbs, 0);
   const totalFatToday = mealsForSelectedDate.reduce((sum, m) => sum + m.fat, 0);
 
-  const caloriePct = Math.min(100, Math.round((totalCaloriesToday / userTarget.targetCalories) * 100));
-  const waterPct = Math.min(100, Math.round((waterForSelectedDate / userTarget.targetWaterMl) * 100));
+  const caloriePct = Math.min(100, Math.round((totalCaloriesToday / calculatedTarget.targetCalories) * 100));
 
   if (loadingSession) {
     return (
@@ -357,9 +389,14 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
             <span className="font-bold text-lg tracking-wider text-emerald-400">CAL AI</span>
           </div>
 
-          <button onClick={handleLogout} title="Cerrar sesión" className="p-2 rounded-xl bg-slate-800 text-slate-300 hover:text-rose-400">
-            <LogOut className="w-5 h-5" />
-          </button>
+          <div className="flex items-center space-x-2">
+            <button onClick={() => setActiveTab('profile')} className="p-2 rounded-xl bg-slate-800 text-slate-300 hover:text-emerald-400">
+              <User className="w-5 h-5" />
+            </button>
+            <button onClick={handleLogout} title="Cerrar sesión" className="p-2 rounded-xl bg-slate-800 text-slate-300 hover:text-rose-400">
+              <LogOut className="w-5 h-5" />
+            </button>
+          </div>
         </header>
 
         {/* MAIN BODY */}
@@ -369,29 +406,46 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
           {activeTab === 'dashboard' && (
             <div className="space-y-6">
 
-              {/* SELECCIONADOR DE FECHA */}
-              <div className="flex items-center justify-between bg-slate-800/80 p-3 rounded-2xl border border-slate-700/50">
-                <div className="flex items-center space-x-2">
-                  <Calendar className="w-4 h-4 text-emerald-400" />
-                  <span className="text-xs font-bold text-slate-300">Fecha:</span>
+              {/* NUEVO CALENDARIO VISUAL EN CIRCULITOS */}
+              <div className="p-4 rounded-3xl bg-slate-800/80 border border-slate-700/50 space-y-3">
+                <div className="flex justify-between items-center text-xs font-bold text-slate-400">
+                  <span>Seleccionar Día</span>
+                  <span className="text-emerald-400">🟢 Ideal | 🟡 Aceptable | 🔴 Fuera</span>
                 </div>
-                <input
-                  type="date"
-                  value={selectedDate}
-                  onChange={(e) => setSelectedDate(e.target.value)}
-                  className="bg-slate-950 text-emerald-400 text-xs font-bold py-1 px-3 rounded-xl border border-slate-700 focus:outline-none"
-                />
+
+                <div className="flex justify-between items-center space-x-1">
+                  {getLast7Days().map((dateStr) => {
+                    const dateObj = new Date(dateStr + 'T00:00:00');
+                    const dayName = dateObj.toLocaleDateString('es-ES', { weekday: 'narrow' });
+                    const dayNum = dateObj.getDate();
+                    const isSelected = selectedDate === dateStr;
+                    const statusClass = getDayStatusColor(dateStr);
+
+                    return (
+                      <button
+                        key={dateStr}
+                        onClick={() => setSelectedDate(dateStr)}
+                        className={`flex flex-col items-center p-2 rounded-2xl transition border-2 ${statusClass} ${isSelected ? 'ring-2 ring-emerald-400 scale-105' : 'opacity-80 hover:opacity-100'}`}
+                      >
+                        <span className="text-[10px] uppercase font-semibold text-slate-400 mb-1">{dayName}</span>
+                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs">
+                          {dayNum}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* RESUMEN DE CALORÍAS */}
               <div className="p-6 rounded-3xl bg-slate-800/80 border border-slate-700/50 shadow-xl">
                 <div className="flex justify-between items-center mb-4">
                   <div>
-                    <h2 className="text-slate-400 text-xs font-semibold uppercase">Resumen del Día</h2>
+                    <h2 className="text-slate-400 text-xs font-semibold uppercase">Resumen Diario</h2>
                     <p className="text-xl font-bold text-white">Objetivo Nutricional</p>
                   </div>
                   <span className="px-3 py-1 bg-emerald-500/10 text-emerald-400 text-xs font-semibold rounded-full">
-                    {selectedDate === new Date().toISOString().split('T')[0] ? 'Hoy' : selectedDate}
+                    {selectedDate}
                   </span>
                 </div>
 
@@ -410,19 +464,19 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
                     </svg>
                     <div className="absolute flex flex-col items-center text-center">
                       <span className="text-3xl font-extrabold text-white">{totalCaloriesToday}</span>
-                      <span className="text-[10px] uppercase font-bold text-slate-400">/ {userTarget.targetCalories} kcal</span>
+                      <span className="text-[10px] uppercase font-bold text-slate-400">/ {calculatedTarget.targetCalories} kcal</span>
                     </div>
                   </div>
 
                   <div className="flex flex-col space-y-2 text-xs">
                     <div>
-                      <p className="text-slate-400">Proteína: <span className="text-rose-400 font-bold">{totalProteinToday}g</span></p>
+                      <p className="text-slate-400">Proteína: <span className="text-rose-400 font-bold">{totalProteinToday} / {calculatedTarget.protein}g</span></p>
                     </div>
                     <div>
-                      <p className="text-slate-400">Carbos: <span className="text-amber-400 font-bold">{totalCarbsToday}g</span></p>
+                      <p className="text-slate-400">Carbos: <span className="text-amber-400 font-bold">{totalCarbsToday} / {calculatedTarget.carbs}g</span></p>
                     </div>
                     <div>
-                      <p className="text-slate-400">Grasas: <span className="text-sky-400 font-bold">{totalFatToday}g</span></p>
+                      <p className="text-slate-400">Grasas: <span className="text-sky-400 font-bold">{totalFatToday} / {calculatedTarget.fat}g</span></p>
                     </div>
                   </div>
                 </div>
@@ -435,22 +489,22 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
                     <Droplet className="w-5 h-5 text-sky-400 fill-sky-400" />
                     <h3 className="text-sm font-bold text-white">Registro de Agua</h3>
                   </div>
-                  <span className="text-xs text-sky-400 font-bold">{waterForSelectedDate} / {userTarget.targetWaterMl} ml</span>
+                  <span className="text-xs text-sky-400 font-bold">{waterForSelectedDate} / 2500 ml</span>
                 </div>
 
                 <div className="w-full bg-slate-950 h-2 rounded-full overflow-hidden">
-                  <div className="bg-sky-400 h-full transition-all duration-500" style={{ width: `${waterPct}%` }} />
+                  <div className="bg-sky-400 h-full transition-all duration-500" style={{ width: `${Math.min(100, (waterForSelectedDate / 2500) * 100)}%` }} />
                 </div>
 
                 <div className="grid grid-cols-3 gap-2 pt-1">
-                  <button onClick={() => addWater(250)} className="py-2 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 text-sky-300 rounded-xl text-xs font-bold transition">
-                    +250 ml (Vaso)
+                  <button onClick={() => addWater(250)} className="py-2 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 text-sky-300 rounded-xl text-xs font-bold">
+                    +250 ml
                   </button>
-                  <button onClick={() => addWater(500)} className="py-2 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 text-sky-300 rounded-xl text-xs font-bold transition">
-                    +500 ml (Botella)
+                  <button onClick={() => addWater(500)} className="py-2 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 text-sky-300 rounded-xl text-xs font-bold">
+                    +500 ml
                   </button>
-                  <button onClick={() => addWater(750)} className="py-2 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 text-sky-300 rounded-xl text-xs font-bold transition">
-                    +750 ml (Grande)
+                  <button onClick={() => addWater(750)} className="py-2 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 text-sky-300 rounded-xl text-xs font-bold">
+                    +750 ml
                   </button>
                 </div>
               </div>
@@ -461,7 +515,7 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
                   <Sparkles className="w-6 h-6 text-emerald-400" />
                   <div>
                     <h3 className="text-sm font-bold text-white">Escanear Comida</h3>
-                    <p className="text-xs text-slate-400">Analiza tus platos reales con Gemini</p>
+                    <p className="text-xs text-slate-400">Analiza tu plato con Gemini IA</p>
                   </div>
                 </div>
                 <button onClick={() => setActiveTab('camera')} className="px-3.5 py-2 bg-emerald-500 text-slate-950 font-bold text-xs rounded-xl">
@@ -471,9 +525,9 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
 
               {/* LISTA DE COMIDAS REGISTRADAS */}
               <div>
-                <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-3">Comidas del Día</h3>
+                <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-3">Comidas de la Fecha</h3>
                 {mealsForSelectedDate.length === 0 ? (
-                  <p className="text-xs text-slate-500 text-center py-6">No hay comidas registradas para esta fecha.</p>
+                  <p className="text-xs text-slate-500 text-center py-6">No hay comidas registradas para este día.</p>
                 ) : (
                   <div className="space-y-3">
                     {mealsForSelectedDate.map((meal) => (
@@ -486,10 +540,10 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
                           </div>
                         </div>
                         <div className="flex items-center space-x-1">
-                          <button onClick={() => editMeal(meal)} title="Editar comida" className="p-2 text-slate-400 hover:text-emerald-400">
+                          <button onClick={() => editMeal(meal)} className="p-2 text-slate-400 hover:text-emerald-400">
                             <Edit3 className="w-4 h-4" />
                           </button>
-                          <button onClick={() => deleteMeal(meal.id)} title="Eliminar comida" className="p-2 text-slate-400 hover:text-rose-400">
+                          <button onClick={() => deleteMeal(meal.id)} className="p-2 text-slate-400 hover:text-rose-400">
                             <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
@@ -514,7 +568,7 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
               <div className="border-2 border-dashed border-slate-700 hover:border-emerald-500 rounded-3xl p-8 text-center bg-slate-900 flex flex-col items-center justify-center min-h-[220px]">
                 <Camera className="w-10 h-10 text-emerald-400 mb-3" />
                 <h3 className="font-bold text-white text-sm mb-1">Selecciona la foto de tu plato</h3>
-                <p className="text-xs text-slate-400 mb-4">Gemini leerá los ingredientes en vivo</p>
+                <p className="text-xs text-slate-400 mb-4">Gemini analizará los ingredientes</p>
 
                 <label className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs rounded-xl cursor-pointer">
                   Subir Foto
@@ -602,17 +656,99 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
             </div>
           )}
 
+          {/* TAB: MÉTRICAS FÍSICAS Y ANÁLISIS CORPORAL */}
+          {activeTab === 'profile' && (
+            <div className="space-y-5">
+              <div className="flex items-center space-x-2">
+                <button onClick={() => setActiveTab('dashboard')} className="p-2 rounded-xl bg-slate-800 text-slate-400">
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
+                <h2 className="text-lg font-bold text-white">Métricas Personales</h2>
+              </div>
+
+              <div className="p-5 bg-slate-800/80 border border-slate-700/50 rounded-3xl space-y-4">
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Edad</label>
+                    <input
+                      type="number"
+                      value={profile.age}
+                      onChange={(e) => setProfile({ ...profile, age: parseInt(e.target.value) || 0 })}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl py-2 px-3 text-sm text-white font-bold"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Peso (kg)</label>
+                    <input
+                      type="number"
+                      value={profile.weight}
+                      onChange={(e) => setProfile({ ...profile, weight: parseFloat(e.target.value) || 0 })}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl py-2 px-3 text-sm text-white font-bold"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Altura (cm)</label>
+                    <input
+                      type="number"
+                      value={profile.height}
+                      onChange={(e) => setProfile({ ...profile, height: parseInt(e.target.value) || 0 })}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl py-2 px-3 text-sm text-white font-bold"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Objetivo Físico</label>
+                  <select
+                    value={profile.goal}
+                    onChange={(e) => setProfile({ ...profile, goal: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl py-2.5 px-3 text-xs text-emerald-400 font-bold"
+                  >
+                    <option value="perder">Perder grasa / Déficit calórico</option>
+                    <option value="mantener">Mantener peso / Recomposición</option>
+                    <option value="ganar">Ganar masa muscular / Superávit</option>
+                  </select>
+                </div>
+
+                <button onClick={saveProfile} className="w-full py-2.5 bg-emerald-500 text-slate-950 font-bold text-xs rounded-xl shadow">
+                  Guardar Métricas
+                </button>
+              </div>
+
+              {/* ANÁLISIS METABÓLICO CALCULADO */}
+              <div className="p-5 bg-emerald-500/10 border border-emerald-500/30 rounded-3xl space-y-3">
+                <div className="flex items-center space-x-2 text-emerald-400 font-bold text-sm">
+                  <Activity className="w-5 h-5" />
+                  <span>Análisis Metabólico Personalizado</span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div className="p-3 bg-slate-900/80 rounded-2xl border border-slate-800">
+                    <p className="text-slate-400 text-[10px] uppercase font-bold">Meta Calórica Diaria</p>
+                    <p className="text-lg font-extrabold text-emerald-400">{calculatedTarget.targetCalories} kcal</p>
+                  </div>
+                  <div className="p-3 bg-slate-900/80 rounded-2xl border border-slate-800">
+                    <p className="text-slate-400 text-[10px] uppercase font-bold">Proteína Recomendada</p>
+                    <p className="text-lg font-extrabold text-rose-400">{calculatedTarget.protein}g</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* TAB: ESTADÍSTICAS */}
           {activeTab === 'stats' && (
             <div className="space-y-6">
               <h2 className="text-lg font-bold text-white flex items-center gap-2">
                 <BarChart2 className="w-5 h-5 text-emerald-400" />
-                Estadísticas de Salud
+                Estadísticas Globales
               </h2>
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="p-4 bg-slate-800/80 border border-slate-700/50 rounded-2xl space-y-1">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase">Comidas Totales</p>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase">Comidas Registradas</p>
                   <p className="text-2xl font-extrabold text-emerald-400">{loggedMeals.length}</p>
                 </div>
                 <div className="p-4 bg-slate-800/80 border border-slate-700/50 rounded-2xl space-y-1">
@@ -620,20 +756,6 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
                   <p className="text-2xl font-extrabold text-amber-400">
                     {loggedMeals.length > 0 ? Math.round(loggedMeals.reduce((acc, m) => acc + m.calories, 0) / Math.max(1, new Set(loggedMeals.map(m => m.created_at.split('T')[0])).size)) : 0}
                   </p>
-                </div>
-              </div>
-
-              <div className="p-5 bg-slate-800/80 border border-slate-700/50 rounded-3xl space-y-3">
-                <h3 className="text-xs font-bold text-slate-300 uppercase">Distribución de Macronutrientes</h3>
-                <div className="flex h-3 rounded-full overflow-hidden bg-slate-950">
-                  <div style={{ width: '40%' }} className="bg-rose-500" />
-                  <div style={{ width: '45%' }} className="bg-amber-400" />
-                  <div style={{ width: '15%' }} className="bg-sky-400" />
-                </div>
-                <div className="flex justify-around text-xs pt-1">
-                  <span className="text-rose-400 font-bold">Proteína 40%</span>
-                  <span className="text-amber-400 font-bold">Carbos 45%</span>
-                  <span className="text-sky-400 font-bold">Grasa 15%</span>
                 </div>
               </div>
 
@@ -645,14 +767,13 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
                 <p className="text-2xl font-extrabold text-white">
                   {(waterLogs.reduce((acc, w) => acc + w.amount_ml, 0) / 1000).toFixed(1)} Litros
                 </p>
-                <p className="text-xs text-slate-400">Total de agua registrada desde que comenzaste.</p>
               </div>
             </div>
           )}
 
         </main>
 
-        {/* NAVEGACIÓN INFERIOR CON ESTADÍSTICAS */}
+        {/* NAVEGACIÓN INFERIOR */}
         <nav className="absolute bottom-0 left-0 right-0 h-16 bg-slate-900 border-t border-slate-800 flex items-center justify-around px-4 z-30">
           <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center ${activeTab === 'dashboard' ? 'text-emerald-400' : 'text-slate-500'}`}>
             <PieChart className="w-5 h-5" />
@@ -663,9 +784,9 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
             <Camera className="w-6 h-6" />
           </button>
 
-          <button onClick={() => setActiveTab('stats')} className={`flex flex-col items-center ${activeTab === 'stats' ? 'text-emerald-400' : 'text-slate-500'}`}>
-            <BarChart2 className="w-5 h-5" />
-            <span className="text-[10px] mt-1">Stats</span>
+          <button onClick={() => setActiveTab('profile')} className={`flex flex-col items-center ${activeTab === 'profile' ? 'text-emerald-400' : 'text-slate-500'}`}>
+            <User className="w-5 h-5" />
+            <span className="text-[10px] mt-1">Métricas</span>
           </button>
         </nav>
 
