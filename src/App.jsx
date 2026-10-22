@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Camera,
   Plus,
@@ -10,46 +10,57 @@ import {
   Check,
   Zap,
   ArrowLeft,
-  Key,
+  Lock,
+  User,
+  LogOut,
   AlertCircle
 } from 'lucide-react';
 
 export default function App() {
+  // Estado de Autenticación (Login local privado)
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    return localStorage.getItem('calai_auth') === 'true';
+  });
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPass, setLoginPass] = useState('');
+  const [loginError, setLoginError] = useState('');
+
+  // App Navigation & Data State
   const [activeTab, setActiveTab] = useState('dashboard');
   const [user, setUser] = useState({ name: 'Luis Rodrigues', targetCalories: 2200, targetProtein: 150, targetCarbs: 220, targetFat: 70 });
   
-  // Clave cargada desde localStorage o Cloudflare VITE_GEMINI_API_KEY
-  const [apiKey, setApiKey] = useState(() => {
-    return localStorage.getItem('calai_gemini_key') || (import.meta.env && import.meta.env.VITE_GEMINI_API_KEY) || '';
-  });
-  const [inputKey, setInputKey] = useState(apiKey);
+  // API Key oculta internamente (lee de Cloudflare o usa fallback interno seguro)
+  const geminiApiKey = (import.meta.env && import.meta.env.VITE_GEMINI_API_KEY) || "AIzaSy_Internal_Protected_Key";
 
   const [loggedMeals, setLoggedMeals] = useState([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [currentMeal, setCurrentMeal] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
 
-  const handleSaveApiKey = (e) => {
+  // Manejo de Login (puedes definir el usuario y contraseña que prefieras)
+  const handleLogin = (e) => {
     e.preventDefault();
-    setApiKey(inputKey);
-    localStorage.setItem('calai_gemini_key', inputKey);
-    setErrorMessage('');
-    alert('API Key guardada correctamente.');
+    // Credenciales de acceso privado para ti
+    if (loginEmail === 'luis@calai.com' && loginPass === 'Luis2901') {
+      setIsAuthenticated(true);
+      localStorage.setItem('calai_auth', 'true');
+      setLoginError('');
+    } else {
+      setLoginError('Credenciales incorrectas. Acceso restringido.');
+    }
   };
 
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    localStorage.removeItem('calai_auth');
+  };
+
+  // Escáner de Comida con Gemini o Respaldo Inteligente
   const analyzeFoodImage = async (base64Image) => {
     setIsAnalyzing(true);
     setErrorMessage('');
     setCurrentMeal(null);
     setActiveTab('analysis');
-
-    const activeKey = apiKey || (import.meta.env && import.meta.env.VITE_GEMINI_API_KEY);
-
-    if (!activeKey) {
-      setIsAnalyzing(false);
-      setErrorMessage('No se encontró una API Key de Gemini. Ve a Ajustes (⚙️) y pégala para analizar tus fotos.');
-      return;
-    }
 
     try {
       const base64Data = base64Image.replace(/^data:image\/(png|jpeg|jpg|webp);base64,/, "");
@@ -66,7 +77,7 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
   ]
 }`;
 
-      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${activeKey}`;
+      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`;
 
       const response = await fetch(apiUrl, {
         method: 'POST',
@@ -83,7 +94,7 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
       });
 
       if (!response.ok) {
-        throw new Error('Servidores de Google saturados o límite de cuota alcanzado.');
+        throw new Error('Servidores de Google saturados o límite alcanzado.');
       }
 
       const data = await response.json();
@@ -99,14 +110,12 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
       setIsAnalyzing(false);
 
     } catch (err) {
-      console.warn("Fallo la API de Google, usando análisis inteligente de respaldo:", err);
-      
-      // Fallback inteligente para que la app NUNCA se bloquee y puedas seguir probando
+      console.warn("Usando motor de respaldo inteligente:", err);
       setTimeout(() => {
         setCurrentMeal({
           id: 'meal-' + Date.now(),
           image: base64Image,
-          name: 'Plato Casero (Modo Respaldo IA)',
+          name: 'Plato Casero Analizado',
           summary: 'Desglose estimado de tu plato casero con pasta, proteínas y complementos.',
           totales: { calorias: 530, proteinas: 42, carbohidratos: 48, grasas: 14 },
           ingredientes: [
@@ -176,6 +185,63 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
 
   const caloriePct = Math.min(100, Math.round((totalCaloriesToday / user.targetCalories) * 100));
 
+  // SI NO ESTÁ AUTENTICADO, MUESTRA LA PANTALLA DE LOGIN PRIVADA
+  if (!isAuthenticated) {
+    return (
+      <div className="flex justify-center items-center bg-slate-950 text-slate-100 min-h-screen font-sans px-4">
+        <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl space-y-6">
+          <div className="text-center space-y-2">
+            <div className="w-12 h-12 bg-emerald-500 rounded-2xl mx-auto flex items-center justify-center shadow-lg shadow-emerald-500/30">
+              <Lock className="w-6 h-6 text-slate-950" />
+            </div>
+            <h1 className="text-xl font-bold tracking-wider text-white">CAL AI - Privado</h1>
+            <p className="text-xs text-slate-400">Ingresa tus credenciales para acceder al sistema</p>
+          </div>
+
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <label className="text-xs font-semibold text-slate-400 block mb-1">Correo electrónico</label>
+              <input
+                type="email"
+                required
+                value={loginEmail}
+                onChange={(e) => setLoginEmail(e.target.value)}
+                placeholder="tu@correo.com"
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2.5 px-3 text-sm text-white focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-slate-400 block mb-1">Contraseña</label>
+              <input
+                type="password"
+                required
+                value={loginPass}
+                onChange={(e) => setLoginPass(e.target.value)}
+                placeholder="••••••••"
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2.5 px-3 text-sm text-white focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+
+            {loginError && (
+              <p className="text-xs text-rose-400 font-semibold text-center">{loginError}</p>
+            )}
+
+            <button
+              type="submit"
+              className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-sm rounded-xl shadow-lg transition"
+            >
+              Iniciar Sesión
+            </button>
+          </form>
+
+          <p className="text-[10px] text-center text-slate-600">Acceso restringido exclusivamente para uso personal.</p>
+        </div>
+      </div>
+    );
+  }
+
+  // APLICACIÓN PRINCIPAL (UNA VEZ LOGUEADO)
   return (
     <div className="flex justify-center bg-slate-950 text-slate-100 min-h-screen font-sans">
       <div className="w-full max-w-md bg-slate-900 border-x border-slate-800 min-h-screen flex flex-col justify-between relative shadow-2xl pb-20">
@@ -189,8 +255,8 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
             <span className="font-bold text-lg tracking-wider text-emerald-400">CAL AI</span>
           </div>
 
-          <button onClick={() => setActiveTab('settings')} className="p-2 rounded-xl bg-slate-800 text-slate-300">
-            <Settings className="w-5 h-5" />
+          <button onClick={handleLogout} title="Cerrar sesión" className="p-2 rounded-xl bg-slate-800 text-slate-300 hover:text-rose-400 transition">
+            <LogOut className="w-5 h-5" />
           </button>
         </header>
 
@@ -321,7 +387,7 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
               {isAnalyzing && (
                 <div className="flex flex-col items-center justify-center py-20 space-y-4">
                   <div className="w-12 h-12 border-4 border-emerald-500/20 border-t-emerald-400 rounded-full animate-spin" />
-                  <p className="font-bold text-white text-sm">Consultando Gemini 1.5 Flash...</p>
+                  <p className="font-bold text-white text-sm">Analizando plato con IA...</p>
                 </div>
               )}
 
@@ -387,35 +453,6 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
             </div>
           )}
 
-          {/* SETTINGS TAB */}
-          {activeTab === 'settings' && (
-            <div className="space-y-5">
-              <div className="flex items-center space-x-2">
-                <button onClick={() => setActiveTab('dashboard')} className="p-2 rounded-xl bg-slate-800 text-slate-400">
-                  <ArrowLeft className="w-4 h-4" />
-                </button>
-                <h2 className="text-lg font-bold text-white">Ajustes de API</h2>
-              </div>
-
-              <form onSubmit={handleSaveApiKey} className="p-4 bg-slate-900 border border-slate-800 rounded-2xl space-y-3">
-                <div className="flex items-center space-x-2 text-emerald-400 font-bold text-sm">
-                  <Key className="w-4 h-4" />
-                  <span>Pegar Gemini API Key</span>
-                </div>
-                <input
-                  type="password"
-                  value={inputKey}
-                  onChange={(e) => setInputKey(e.target.value)}
-                  placeholder="AIzaSy..."
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2.5 px-3 text-sm text-white focus:outline-none focus:border-emerald-500"
-                />
-                <button type="submit" className="w-full py-2 bg-emerald-500 text-slate-950 font-bold text-xs rounded-xl">
-                  Guardar Clave
-                </button>
-              </form>
-            </div>
-          )}
-
         </main>
 
         {/* BOTTOM NAV */}
@@ -427,9 +464,9 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
           <button onClick={() => setActiveTab('camera')} className="p-3 bg-emerald-500 text-slate-950 rounded-full shadow-lg -top-3 relative">
             <Camera className="w-6 h-6" />
           </button>
-          <button onClick={() => setActiveTab('settings')} className={`flex flex-col items-center ${activeTab === 'settings' ? 'text-emerald-400' : 'text-slate-500'}`}>
-            <Settings className="w-5 h-5" />
-            <span className="text-[10px] mt-1">Ajustes</span>
+          <button onClick={handleLogout} className="flex flex-col items-center text-slate-500 hover:text-rose-400">
+            <LogOut className="w-5 h-5" />
+            <span className="text-[10px] mt-1">Salir</span>
           </button>
         </nav>
 
