@@ -35,7 +35,7 @@ export default function App() {
 
   // Navegación
   const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard', 'camera', 'analysis', 'stats', 'profile'
-  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(() => getLocalDateString());
 
   // Métricas del usuario
   const [profile, setProfile] = useState({ age: 25, weight: 70, height: 170, goal: 'mantener' });
@@ -76,6 +76,15 @@ export default function App() {
 
     return () => subscription.unsubscribe();
   }, []);
+
+    // Función para obtener la fecha local en formato YYYY-MM-DD
+  const getLocalDateString = (d = new Date()) => {
+    const date = new Date(d);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
 
   // Recalcular meta calórica según BMR (Mifflin-St Jeor)
   useEffect(() => {
@@ -293,12 +302,12 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
   };
 
   // Generar la lista de los últimos 7 días para el nuevo calendario
-  const getLast7Days = () => {
+    const getLast7Days = () => {
     const days = [];
     for (let i = 6; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
-      days.push(d.toISOString().split('T')[0]);
+      days.push(getLocalDateString(d));
     }
     return days;
   };
@@ -319,8 +328,8 @@ Responde ÚNICAMENTE con un objeto JSON estricto sin markdown:
   };
 
   // Datos filtrados para el día seleccionado
-  const mealsForSelectedDate = loggedMeals.filter(m => m.created_at.split('T')[0] === selectedDate);
-  const waterForSelectedDate = waterLogs.filter(w => w.created_at.split('T')[0] === selectedDate).reduce((sum, w) => sum + w.amount_ml, 0);
+  const mealsForSelectedDate = loggedMeals.filter(m => getLocalDateString(m.created_at) === selectedDate);
+  const waterForSelectedDate = waterLogs.filter(w => getLocalDateString(w.created_at) === selectedDate).reduce((sum, w) => sum + w.amount_ml, 0);
 
   const totalCaloriesToday = mealsForSelectedDate.reduce((sum, m) => sum + m.calories, 0);
   const totalProteinToday = mealsForSelectedDate.reduce((sum, m) => sum + m.protein, 0);
